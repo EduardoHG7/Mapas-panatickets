@@ -249,6 +249,31 @@ body.light .link-box{background:#F8FAFC;border:1px solid #CBD5E1;color:#4F46E5;}
 .token-note{font-size:9px;line-height:1.6;margin-bottom:10px;}
 body.dark .token-note{color:#94A3B8;}
 body.light .token-note{color:#64748B;}
+
+body.dark .group-btn{border:1px solid #D97706;background:#1C1500;color:#F59E0B;padding:5px 8px;border-radius:5px;cursor:pointer;font-size:9px;font-weight:700;}
+body.dark .group-btn:hover{background:#292000;}
+body.dark #mesa-panel{background:#0B1120;border-top:1px solid #1E293B;padding:10px 14px;max-height:180px;overflow-y:auto;}
+body.dark .mesa-item{background:#060A12;border:1px solid #1E293B;}
+body.dark .mesa-item:hover{border-color:#334155;}
+body.dark .mesa-name{color:#F59E0B;}
+body.dark .mesa-meta{color:#475569;}
+body.dark .mesa-del{color:#374151;}
+body.dark .mesa-del:hover{color:#F87171;}
+body.light .group-btn{border:1px solid #D97706;background:#FFFBEB;color:#D97706;padding:5px 8px;border-radius:5px;cursor:pointer;font-size:9px;font-weight:700;}
+body.light .group-btn:hover{background:#FEF3C7;}
+body.light #mesa-panel{background:#FFFFFF;border-top:1px solid #E2E8F0;padding:10px 14px;max-height:180px;overflow-y:auto;}
+body.light .mesa-item{background:#F8FAFC;border:1px solid #E2E8F0;}
+body.light .mesa-item:hover{border-color:#94A3B8;}
+body.light .mesa-name{color:#D97706;}
+body.light .mesa-meta{color:#94A3B8;}
+body.light .mesa-del{color:#CBD5E1;}
+body.light .mesa-del:hover{color:#EF4444;}
+.mesa-item{padding:6px 9px;border-radius:6px;margin-bottom:3px;display:flex;align-items:center;gap:6px;}
+.mesa-tag{font-size:9px;font-weight:800;background:#D97706;color:white;padding:1px 5px;border-radius:3px;flex-shrink:0;}
+.mesa-info{flex:1;min-width:0;}
+.mesa-name{font-size:10px;font-weight:700;}
+.mesa-meta{font-size:8px;}
+.mesa-del{background:transparent;border:none;cursor:pointer;font-size:13px;padding:0;line-height:1;}
 </style>
 </head>
 <body class="dark">
@@ -285,6 +310,7 @@ body.light .token-note{color:#64748B;}
       <button class="sel-action-btn" onclick="cutSelection()" title="Cortar (Ctrl+X)">✂ Cortar</button>
       <button class="sel-action-btn" onclick="pasteSelection()" title="Pegar (Ctrl+V)" id="btn-paste" style="display:none">📌 Pegar</button>
       <button class="sel-action-btn danger" onclick="deleteSelection()" title="Eliminar (Del)">🗑 Borrar</button>
+      <button class="group-btn" onclick="groupAsMesa()">🪑 Agrupar Mesa</button>
     </div>
     <div id="sel-info"></div>
     <button class="clear-btn" style="margin-top:4px;" onclick="clearAll()">🗑 Borrar todo el mapa</button>
@@ -315,6 +341,13 @@ body.light .token-note{color:#64748B;}
       </div>
     </div>
     <div id="saved-list"><div style="font-size:9px;color:#475569;text-align:center;padding:8px 0;">Sin mapas guardados</div></div>
+  </div>
+  <div id="mesa-panel" style="display:none;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span class="sb-label" style="margin:0">Mesas / Lounges</span>
+      <span id="mesa-count" style="font-size:9px;color:#F59E0B;font-weight:700;"></span>
+    </div>
+    <div id="mesa-list"></div>
   </div>
 </div>
 
@@ -451,6 +484,7 @@ let zones = [
   {id:"z3",nombre:"General",color:"#10B981",precio:""},
 ];
 let activeZone="z1", tool="paint", isPainting=false, paintMode="paint", editingZone=null, theme="dark";
+let mesas=[], mesaIdCounter=0;
 
 // Selection state
 let selStart=null, selEnd=null, selActive=false;
@@ -558,6 +592,8 @@ function drawGrid(){
     ctx.strokeStyle=r%5===0?gridLineMaj():gridLine(); ctx.lineWidth=r%5===0?1:0.5;
     ctx.beginPath(); ctx.moveTo(0,r*C); ctx.lineTo(canvas.width,r*C); ctx.stroke();
   }
+  // Build set of mesa cells to skip normal labeling
+  const mesaCells=new Set(); mesas.forEach(m=>m.cells.forEach(({r,c})=>mesaCells.add(r+','+c)));
   const labels=computeLabels();
   for(let r=0;r<ROWS;r++){
     for(let c=0;c<COLS;c++){
@@ -567,67 +603,188 @@ function drawGrid(){
       ctx.fillRect(c*C+1,r*C+1,C-2,C-2);
       ctx.strokeStyle=seatBorder(); ctx.lineWidth=0.6;
       ctx.strokeRect(c*C+1,r*C+1,C-2,C-2);
-      if(!z.esEscenario&&C>=10){
+      if(!z.esEscenario&&C>=10&&!mesaCells.has(r+','+c)){
         const lbl=labels[`${r},${c}`];
         if(lbl){ctx.fillStyle=seatText();const fs=Math.max(4.5,Math.min(8,C*0.42));ctx.font=`bold ${fs}px monospace`;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(lbl,c*C+C/2,r*C+C/2);}
       }
     }
   }
-  // Draw selection rectangle
+  // Draw mesas
+  mesas.forEach(mesa=>{
+    const sorted=[...mesa.cells].sort((a,b)=>a.r!==b.r?a.r-b.r:a.c-b.c);
+    // Seat labels
+    if(C>=8) sorted.forEach((mc,idx)=>{
+      const lbl=mesa.rowLetter+(mesa.seatStart+idx);
+      ctx.fillStyle=seatText();
+      const fs=Math.max(4,Math.min(7,C*0.4));
+      ctx.font=`bold ${fs}px monospace`; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText(lbl, mc.c*C+C/2, mc.r*C+C/2);
+    });
+    // Outline - only outer edges
+    const cs=new Set(mesa.cells.map(({r,c})=>r+','+c));
+    ctx.strokeStyle="#F59E0B"; ctx.lineWidth=2; ctx.setLineDash([]);
+    mesa.cells.forEach(({r,c})=>{
+      const x=c*C,y=r*C;
+      if(!cs.has((r-1)+','+c)){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+C,y);ctx.stroke();}
+      if(!cs.has((r+1)+','+c)){ctx.beginPath();ctx.moveTo(x,y+C);ctx.lineTo(x+C,y+C);ctx.stroke();}
+      if(!cs.has(r+','+(c-1))){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y+C);ctx.stroke();}
+      if(!cs.has(r+','+(c+1))){ctx.beginPath();ctx.moveTo(x+C,y);ctx.lineTo(x+C,y+C);ctx.stroke();}
+    });
+    // Tag badge
+    if(sorted.length){
+      const tc=sorted[0]; const tx=tc.c*C,ty=tc.r*C;
+      const tw=Math.min(C*2.8,34),th=10;
+      ctx.fillStyle="#D97706";
+      ctx.beginPath(); ctx.roundRect(tx+1,ty+1,tw,th,2); ctx.fill();
+      ctx.fillStyle="white"; ctx.font=`bold ${Math.max(5,Math.min(8,C*0.5))}px monospace`;
+      ctx.textAlign="left"; ctx.textBaseline="top";
+      ctx.fillText(mesa.tag, tx+3, ty+2);
+    }
+  });
+  // Selection rectangle
   if(selActive&&selStart&&selEnd){
-    const r1=Math.min(selStart.r,selEnd.r), r2=Math.max(selStart.r,selEnd.r);
-    const c1=Math.min(selStart.c,selEnd.c), c2=Math.max(selStart.c,selEnd.c);
+    const r1=Math.min(selStart.r,selEnd.r),r2=Math.max(selStart.r,selEnd.r);
+    const c1=Math.min(selStart.c,selEnd.c),c2=Math.max(selStart.c,selEnd.c);
     ctx.fillStyle=selColor();
     ctx.fillRect(c1*C,r1*C,(c2-c1+1)*C,(r2-r1+1)*C);
-    ctx.strokeStyle=selBorder(); ctx.lineWidth=1.5;
-    ctx.setLineDash([4,3]);
+    ctx.strokeStyle=selBorder(); ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
     ctx.strokeRect(c1*C+0.5,r1*C+0.5,(c2-c1+1)*C-1,(r2-r1+1)*C-1);
     ctx.setLineDash([]);
   }
-  // Draw paste preview
+  // Paste preview
   if(pasteMode&&clipboard){
-    const r=pasteCursor.r, c=pasteCursor.c;
+    const r=pasteCursor.r,c=pasteCursor.c;
     ctx.fillStyle=pasteColor();
     ctx.fillRect(c*C,r*C,clipboard.width*C,clipboard.height*C);
-    ctx.strokeStyle=pasteBorderColor(); ctx.lineWidth=1.5;
-    ctx.setLineDash([4,3]);
+    ctx.strokeStyle=pasteBorderColor(); ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
     ctx.strokeRect(c*C+0.5,r*C+0.5,clipboard.width*C-1,clipboard.height*C-1);
     ctx.setLineDash([]);
-    // Show preview cells
-    for(let dr=0;dr<clipboard.height;dr++){
-      for(let dc=0;dc<clipboard.width;dc++){
-        const zid=clipboard.cells[dr][dc]; if(!zid)continue;
-        const z=zones.find(z=>z.id===zid); if(!z)continue;
-        ctx.fillStyle=z.color+"BB";
-        ctx.fillRect((c+dc)*C+1,(r+dr)*C+1,C-2,C-2);
-      }
+    for(let dr=0;dr<clipboard.height;dr++) for(let dc=0;dc<clipboard.width;dc++){
+      const zid=clipboard.cells[dr][dc]; if(!zid)continue;
+      const z=zones.find(z=>z.id===zid); if(!z)continue;
+      ctx.fillStyle=z.color+"BB";
+      ctx.fillRect((c+dc)*C+1,(r+dr)*C+1,C-2,C-2);
     }
   }
 }
 function drawAll(){ drawGrid(); drawRulerTop(); drawRulerLeft(); }
 
-function computeLabels(){
-  const labels={};
-  zones.filter(z=>!z.esEscenario).forEach(z=>{
-    const byRow={};
-    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++)
-      if(grid[r][c]===z.id){if(!byRow[r])byRow[r]=[];byRow[r].push(c);}
-    Object.keys(byRow).map(Number).sort((a,b)=>a-b).forEach((r,ri)=>{
-      byRow[r].sort((a,b)=>a-b).forEach((c,ci)=>{labels[`${r},${c}`]=`${letra(ri)}${ci+1}`;});
-    });
+function buildRowRankMap(){
+  // Build a map: gridRow -> letterIndex (0=A, 1=B, ...)
+  // Rules:
+  //   - Only rows that have painted cells (or are part of a mesa) count
+  //   - Empty rows between painted rows are skipped (don't consume a letter)
+  //   - Mesa rows: all rows of a mesa share the same letter (the mesa's start row rank)
+  //   - Rank is determined by the ORDER of occupied rows top→bottom
+
+  const mesaCellSet = new Set();
+  const mesaRowRange = {}; // startRow -> endRow (for each mesa)
+  mesas.forEach(m => {
+    const s = Math.min(...m.cells.map(c=>c.r));
+    const e = Math.max(...m.cells.map(c=>c.r));
+    mesaRowRange[s] = e;
+    m.cells.forEach(({r,c}) => mesaCellSet.add(r+','+c));
   });
-  return labels;
+
+  // Collect all "occupied" grid rows
+  const occupiedRows = new Set();
+  // Loose cell rows
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const zid=grid[r][c];
+    if(zid && zid!=='escenario' && !mesaCellSet.has(r+','+c)) occupiedRows.add(r);
+  }
+  // Mesa start rows
+  Object.keys(mesaRowRange).forEach(r => occupiedRows.add(Number(r)));
+
+  // Sort occupied rows
+  const sortedRows = [...occupiedRows].sort((a,b)=>a-b);
+
+  // Walk through sorted rows and assign rank, skipping mesa interior rows
+  const rowRank = {}; // gridRow -> letterIndex
+  let rank = 0;
+  let i = 0;
+  while(i < sortedRows.length){
+    const r = sortedRows[i];
+    if(mesaRowRange[r] !== undefined){
+      // This is a mesa start row — assign rank to all its rows
+      const endRow = mesaRowRange[r];
+      for(let mr=r; mr<=endRow; mr++) rowRank[mr] = rank;
+      // Skip all rows of this mesa in sortedRows
+      while(i < sortedRows.length && sortedRows[i] <= endRow) i++;
+      rank++;
+    } else {
+      rowRank[r] = rank;
+      rank++;
+      i++;
+    }
+  }
+  return rowRank;
 }
 
-// ── Zoom ───────────────────────────────────────────────────────────────
+function gridRowToLetter(gridRow, rowRankMap){
+  if(!rowRankMap) rowRankMap = buildRowRankMap();
+  const rank = rowRankMap[gridRow];
+  if(rank === undefined) return '?';
+  return letra(rank);
+}
+
+function computeLabels(){
+  const rowRankMap = buildRowRankMap();
+  const mesaCellSet = new Set();
+  mesas.forEach(m => m.cells.forEach(({r,c}) => mesaCellSet.add(r+','+c)));
+
+  // Update mesa rowLetters using rank map
+  mesas.forEach(m => {
+    const startRow = Math.min(...m.cells.map(c=>c.r));
+    m.rowLetter = gridRowToLetter(startRow, rowRankMap);
+  });
+  if(mesas.length) recomputeMesaSeats(rowRankMap);
+
+  const labels = {};
+
+  // Max seat used by mesas per letter
+  const mesaSeatEnd = {};
+  mesas.forEach(m => {
+    const end = m.seatStart + m.cells.length - 1;
+    if(!mesaSeatEnd[m.rowLetter] || end > mesaSeatEnd[m.rowLetter])
+      mesaSeatEnd[m.rowLetter] = end;
+  });
+
+  // Label loose cells
+  const looseByCells = {};
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const zid=grid[r][c];
+    if(!zid||zid==='escenario'||mesaCellSet.has(r+','+c)) continue;
+    const l = gridRowToLetter(r, rowRankMap);
+    if(l==='?') continue;
+    if(!looseByCells[l]) looseByCells[l]=[];
+    looseByCells[l].push({r,c});
+  }
+
+  for(const [l, cells] of Object.entries(looseByCells)){
+    cells.sort((a,b)=>a.r!==b.r?a.r-b.r:a.c-b.c);
+    const start = (mesaSeatEnd[l]||0) + 1;
+    cells.forEach((cell,i) => {
+      labels[cell.r+','+cell.c] = l+(start+i);
+    });
+  }
+
+  return labels;
+}
 const ZOOM_STEPS=[30,50,75,100,125,150,200,300,400];
 function zoom(dir){
-  const idx=ZOOM_STEPS.findIndex(s=>s>=zoomPct);
-  applyZoom(dir>0?ZOOM_STEPS[Math.min(ZOOM_STEPS.length-1,idx+1)]:ZOOM_STEPS[Math.max(0,idx-1)]);
+  const cur = ZOOM_STEPS.findIndex(s=>s>=zoomPct);
+  const idx = cur<0 ? ZOOM_STEPS.length-1 : cur;
+  applyZoom(dir>0 ? ZOOM_STEPS[Math.min(ZOOM_STEPS.length-1,idx+1)] : ZOOM_STEPS[Math.max(0,idx-1)]);
 }
 function setZoomFromInput(v){ applyZoom(Math.max(30,Math.min(400,parseInt(v)||100))); }
 function resetZoom(){ applyZoom(100); }
-function applyZoom(pct){ zoomPct=pct; document.getElementById("zoom-level").value=pct; initCanvases(); drawAll(); }
+function applyZoom(pct){
+  zoomPct=pct;
+  const el=document.getElementById("zoom-level");
+  if(el) el.value=pct;
+  initCanvases(); drawAll();
+}
 document.getElementById("canvas-area").addEventListener("wheel",e=>{
   if(!e.ctrlKey&&!e.metaKey)return; e.preventDefault(); zoom(e.deltaY<0?1:-1);
 },{passive:false});
@@ -813,6 +970,7 @@ function updateStats(){
   zones.filter(z=>!z.esEscenario).forEach(z=>{ const n=countZone(z.id); if(n>0){total+=n;zs.push({z,n});} });
   document.getElementById("stat-total").textContent=total.toLocaleString();
   document.getElementById("stat-zones").innerHTML=zs.map(({z,n})=>`<div class="stat-row"><span class="stat-label">${z.nombre}</span><span class="stat-val">${n}</span></div>`).join("");
+  if(mesas.length){const ms=mesas.reduce((a,m)=>a+m.cells.length,0);document.getElementById("stat-zones").innerHTML+=`<div class="stat-row"><span class="stat-label" style="color:#F59E0B">🪑 Mesas</span><span class="stat-val">${mesas.length} (${ms} sillas)</span></div>`;}
   document.getElementById("legend").innerHTML=zs.map(({z,n})=>
     `<div class="legend-item"><div class="dot" style="background:${z.color}"></div><span>${z.nombre}</span>${z.precio?`<span class="legend-price"> · ${z.precio}</span>`:""}<span class="legend-count"> (${n})</span></div>`
   ).join("");
@@ -901,6 +1059,7 @@ function resetMap(){
   ];
   zoneCounter=4; activeZone="z1";
   selActive=false; selStart=null; selEnd=null; pasteMode=false; clipboard=null;
+  mesas=[]; mesaIdCounter=0;
   document.getElementById("btn-paste").style.display="none";
   initCanvases(); drawAll(); updateStats(); renderZones();
   setActive("z1"); setTool("paint");
@@ -919,6 +1078,7 @@ function saveMap(afterSave){
       cols: COLS, rows: ROWS,
       zones: JSON.parse(JSON.stringify(zones)),
       grid: grid.map(r=>[...r]),
+      mesas: JSON.parse(JSON.stringify(mesas)),
       savedAt: new Date().toLocaleDateString("es-PA"),
       seats: zones.filter(z=>!z.esEscenario).reduce((a,z)=>a+countZone(z.id),0),
     };
@@ -1019,47 +1179,123 @@ function downloadExcel(){
     try{
       const evento=document.getElementById("evento-input").value||"Evento";
       const labels=computeLabels();
+      // Add mesa labels
+      mesas.forEach(m=>{
+        const sorted=[...m.cells].sort((a,b)=>a.r!==b.r?a.r-b.r:a.c-b.c);
+        sorted.forEach((mc,i)=>{labels[mc.r+','+mc.c]={seat:m.rowLetter+(m.seatStart+i),mesa:m.tag};});
+      });
+
+      // Find bounds
       let maxR=0,maxC=0;
       for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(grid[r][c]){maxR=Math.max(maxR,r);maxC=Math.max(maxC,c);}
+
+      // Build zone color lookup: zoneId -> color
+      const zoneColor={};
+      zones.forEach(z=>{ zoneColor[z.id]=z.color; });
+
       const wb=XLSX.utils.book_new();
+
+      // Build wsData and track cell→zone for styling
       const wsData=[[evento,...Array(maxC).fill(null)]];
+      const cellZone={}; // "excelRow,excelCol" -> zoneId
+
       for(let r=0;r<=maxR;r++){
         const row=[];
         for(let c=0;c<=maxC;c++){
-          const zid=grid[r][c]; if(!zid){row.push(null);continue;}
-          const z=zones.find(z=>z.id===zid); if(!z){row.push(null);continue;}
-          row.push(z.esEscenario?"ESCENARIO":(labels[`${r},${c}`]||""));
+          const zid=grid[r][c];
+          if(!zid){row.push(null);continue;}
+          const z=zones.find(z=>z.id===zid);
+          if(!z){row.push(null);continue;}
+          const xl=labels[r+','+c];
+          let cellVal;
+          if(z.esEscenario) cellVal="ESCENARIO";
+          else if(xl&&xl.mesa) cellVal=xl.seat+' ['+xl.mesa+']';
+          else cellVal=xl||"";
+          row.push(cellVal);
+          cellZone[(r+1)+','+(c)]=zid; // +1 for title row offset
         }
         wsData.push(row);
       }
-      wsData.push([]); wsData.push(["ZONAS","PRECIO","ASIENTOS"]);
+
+      // Legend
+      wsData.push([]);
+      wsData.push(["ZONAS","PRECIO","ASIENTOS"]);
       zones.filter(z=>!z.esEscenario).forEach(z=>wsData.push([z.nombre,z.precio||"—",countZone(z.id)]));
+
       const ws=XLSX.utils.aoa_to_sheet(wsData);
-      ws["!cols"]=Array.from({length:maxC+2},()=>({wch:4.8}));
-      ws["!rows"]=[{hpt:22},...Array.from({length:maxR+1},()=>({hpt:14}))];
+      ws["!cols"]=Array.from({length:maxC+2},()=>({wch:5.5}));
+      ws["!rows"]=[{hpt:24},...Array.from({length:maxR+1},()=>({hpt:16}))];
       if(!ws["!merges"])ws["!merges"]=[];
       ws["!merges"].push({s:{r:0,c:0},e:{r:0,c:maxC}});
+
+      // Style helpers
       const hx=hex=>"FF"+hex.replace("#","").toUpperCase().padStart(6,"0");
       const sf=hex=>({patternType:"solid",fgColor:{rgb:hx(hex)}});
       const ca={horizontal:"center",vertical:"center"};
-      const hb=()=>{const s={style:"hair",color:{rgb:"FFFFFFFF"}};return{top:s,bottom:s,left:s,right:s};};
+      const wb_border=color=>{const s={style:"thin",color:{rgb:hx(color)}};return{top:s,bottom:s,left:s,right:s};};
+
+      // Title row
       const tA=XLSX.utils.encode_cell({r:0,c:0});
-      if(ws[tA])ws[tA].s={fill:sf("#0F172A"),font:{sz:13,bold:true,color:{rgb:"FFC0A8FF"}},alignment:ca};
-      for(let r=0;r<=maxR;r++) for(let c=0;c<=maxC;c++){
-        const zid=grid[r][c]; if(!zid)continue;
-        const z=zones.find(z=>z.id===zid); if(!z)continue;
-        const addr=XLSX.utils.encode_cell({r:r+1,c});
-        if(ws[addr])ws[addr].s={fill:sf(z.color),font:{sz:z.esEscenario?7:6,bold:z.esEscenario,color:{rgb:"FFFFFFFF"}},alignment:ca,border:hb()};
+      if(ws[tA]) ws[tA].s={
+        fill:sf("#0F172A"),
+        font:{sz:14,bold:true,color:{rgb:"FFC0A8FF"}},
+        alignment:ca
+      };
+
+      // Seat cells — color from zone, white text, thin border matching zone color
+      for(let r=0;r<=maxR;r++){
+        for(let c=0;c<=maxC;c++){
+          const zid=grid[r][c]; if(!zid) continue;
+          const z=zones.find(z=>z.id===zid); if(!z) continue;
+          const addr=XLSX.utils.encode_cell({r:r+1,c});
+          if(!ws[addr]) continue;
+          const isEsc=z.esEscenario;
+          // Darken color slightly for border (use same color with more opacity = just use same)
+          ws[addr].s={
+            fill: sf(z.color),
+            font: {
+              sz: isEsc ? 8 : 7,
+              bold: true,
+              color: {rgb:"FFFFFFFF"} // always white text
+            },
+            alignment: ca,
+            border: wb_border(z.color) // border same color as cell = subtle separation
+          };
+        }
       }
+
+      // Legend header
       const ls=maxR+3;
-      if(ws[XLSX.utils.encode_cell({r:ls,c:0})])ws[XLSX.utils.encode_cell({r:ls,c:0})].s={fill:sf("#0F172A"),font:{sz:10,bold:true,color:{rgb:"FFC0A8FF"}},alignment:ca};
+      const lhAddr=XLSX.utils.encode_cell({r:ls,c:0});
+      if(ws[lhAddr]) ws[lhAddr].s={
+        fill:sf("#0F172A"),
+        font:{sz:10,bold:true,color:{rgb:"FFC0A8FF"}},
+        alignment:ca
+      };
+
+      // Legend rows
       zones.filter(z=>!z.esEscenario).forEach((z,i)=>{
         const row=ls+1+i;
-        const a0=XLSX.utils.encode_cell({r:row,c:0}),a1=XLSX.utils.encode_cell({r:row,c:1}),a2=XLSX.utils.encode_cell({r:row,c:2});
-        if(ws[a0])ws[a0].s={fill:sf(z.color),font:{sz:10,bold:true,color:{rgb:"FFFFFFFF"}},alignment:{horizontal:"left",vertical:"center"}};
-        if(ws[a1])ws[a1].s={fill:sf("#111827"),font:{sz:10,color:{rgb:"FF6EE7B7"}},alignment:ca};
-        if(ws[a2])ws[a2].s={fill:sf("#111827"),font:{sz:10,color:{rgb:"FF94A3B8"}},alignment:ca};
+        const a0=XLSX.utils.encode_cell({r:row,c:0});
+        const a1=XLSX.utils.encode_cell({r:row,c:1});
+        const a2=XLSX.utils.encode_cell({r:row,c:2});
+        if(ws[a0]) ws[a0].s={
+          fill:sf(z.color),
+          font:{sz:10,bold:true,color:{rgb:"FFFFFFFF"}},
+          alignment:{horizontal:"left",vertical:"center"}
+        };
+        if(ws[a1]) ws[a1].s={
+          fill:sf("#1E293B"),
+          font:{sz:10,color:{rgb:"FF6EE7B7"}},
+          alignment:ca
+        };
+        if(ws[a2]) ws[a2].s={
+          fill:sf("#1E293B"),
+          font:{sz:10,color:{rgb:"FF94A3B8"}},
+          alignment:ca
+        };
       });
+
       XLSX.utils.book_append_sheet(wb,ws,"Mapa de Asientos");
       XLSX.writeFile(wb,`${evento.replace(/\s+/g,"_")}_mapa.xlsx`);
       setStatus("✅ ¡Descargado!","ok");
@@ -1076,6 +1312,7 @@ function setStatus(msg,type){
 // ── Init ───────────────────────────────────────────────────────────────
 initCanvases(); drawAll();
 setActive("z1"); renderZones(); updateStats(); renderSaved();
+renderMesaPanel();
 loadFromGistIfNeeded();
 
 // ── Share via GitHub Gist ──────────────────────────────────────────────
@@ -1131,6 +1368,7 @@ async function smDoShare(){
       cols: COLS, rows: ROWS,
       zones: JSON.parse(JSON.stringify(zones)),
       grid: grid.map(r=>[...r]),
+      mesas: JSON.parse(JSON.stringify(mesas)),
       sharedAt: new Date().toISOString(),
     };
 
@@ -1217,6 +1455,10 @@ async function loadFromGistIfNeeded(){
     zoneCounter = Math.max(4, ...zones.map(z=>parseInt(z.id.replace('z',''))||0));
     initCanvases(); drawAll(); updateStats(); renderZones();
     setActive(zones.find(z=>!z.esEscenario)?.id || 'z1');
+    mesas=data.mesas?JSON.parse(JSON.stringify(data.mesas)):[];
+    mesaIdCounter=mesas.length?Math.max(...mesas.map(x=>x.id)):0;
+    if(mesas.length)recomputeMesaSeats();
+    renderMesaPanel();
 
     if(mode === 'view'){
       // Disable editing tools
@@ -1241,5 +1483,89 @@ async function loadFromGistIfNeeded(){
     showToast('❌ Error cargando mapa: ' + e.message);
     console.error(e);
   }
+}
+
+// ── Mesa / Lounge System ───────────────────────────────────────────────
+function getMesaRowLetter(cells){
+  // Temporarily add new cells to compute the rank map including them
+  const startRow = Math.min(...cells.map(c=>c.r));
+  const rowRankMap = buildRowRankMap();
+  // If startRow not in map yet (new row), we need to insert it
+  if(rowRankMap[startRow] === undefined){
+    // Rebuild with new cells considered as loose (they'll get a rank)
+    // Add them temporarily to grid
+    const tempZone = '__temp__';
+    cells.forEach(({r,c}) => { if(!grid[r][c]) grid[r][c] = tempZone; });
+    const rm = buildRowRankMap();
+    cells.forEach(({r,c}) => { if(grid[r][c]===tempZone) grid[r][c]=null; });
+    return gridRowToLetter(startRow, rm);
+  }
+  return gridRowToLetter(startRow, rowRankMap);
+}
+function getMesaNum(letter){return mesas.filter(m=>m.rowLetter===letter).length+1;}
+function getMesaTag(letter,n){return 'M'+letter+n;}
+function getMesaSeatStart(letter){
+  const row = mesas.filter(m=>m.rowLetter===letter)
+    .sort((a,b)=>Math.min(...a.cells.map(c=>c.c))-Math.min(...b.cells.map(c=>c.c)));
+  if(!row.length) return 1;
+  const last = row[row.length-1];
+  return last.seatStart + last.cells.length;
+}
+function groupAsMesa(){
+  if(!selActive||!selStart||!selEnd){showToast('⚠ Seleccioná celdas primero');return;}
+  const s=getSelRect();
+  const cells=[];
+  for(let r=s.r1;r<=s.r2;r++) for(let c=s.c1;c<=s.c2;c++)
+    if(grid[r][c]&&grid[r][c]!=='escenario')cells.push({r,c,zoneId:grid[r][c]});
+  if(cells.length<2){showToast('⚠ Seleccioná al menos 2 celdas pintadas');return;}
+  const zids=[...new Set(cells.map(c=>c.zoneId))];
+  if(zids.length>1){showToast('⚠ Todas las celdas deben ser de la misma zona');return;}
+  if(cells.some(c=>mesas.some(m=>m.cells.some(mc=>mc.r===c.r&&mc.c===c.c)))){showToast('⚠ Algunas celdas ya son parte de una mesa');return;}
+  const zoneId=zids[0];
+  const letter=getMesaRowLetter(cells);
+  const num=getMesaNum(letter);
+  mesas.push({id:++mesaIdCounter,tag:getMesaTag(letter,num),rowLetter:letter,mesaNum:num,zoneId,
+    cells:cells.map(({r,c})=>({r,c})),seatStart:getMesaSeatStart(letter)});
+  selActive=false;selStart=null;selEnd=null;
+  updateSelInfo();drawGrid();renderMesaPanel();updateStats();
+  showToast('🪑 '+getMesaTag(letter,num)+' creada con '+cells.length+' sillas');
+}
+function removeMesa(id){
+  mesas=mesas.filter(m=>m.id!==id);
+  recomputeMesaSeats();
+  drawGrid();renderMesaPanel();updateStats();
+  showToast('🗑 Mesa eliminada');
+}
+function recomputeMesaSeats(rowRankMap){
+  if(!rowRankMap) rowRankMap = buildRowRankMap();
+  mesas.forEach(m => {
+    const startRow = Math.min(...m.cells.map(c=>c.r));
+    m.rowLetter = gridRowToLetter(startRow, rowRankMap);
+  });
+  const byRow={};
+  mesas.forEach(m=>{if(!byRow[m.rowLetter])byRow[m.rowLetter]=[];byRow[m.rowLetter].push(m);});
+  for(const l of Object.keys(byRow)){
+    byRow[l].sort((a,b)=>Math.min(...a.cells.map(c=>c.c))-Math.min(...b.cells.map(c=>c.c)));
+    let seat=1;
+    byRow[l].forEach((m,i)=>{m.mesaNum=i+1;m.tag=getMesaTag(m.rowLetter,m.mesaNum);m.seatStart=seat;seat+=m.cells.length;});
+  }
+}
+function renderMesaPanel(){
+  const panel=document.getElementById('mesa-panel');
+  const count=document.getElementById('mesa-count');
+  if(!mesas.length){panel.style.display='none';return;}
+  panel.style.display='block';
+  count.textContent=mesas.length+' mesa'+(mesas.length>1?'s':'');
+  document.getElementById('mesa-list').innerHTML=mesas.map(m=>{
+    const z=zones.find(z=>z.id===m.zoneId);
+    return `<div class="mesa-item">
+      <span class="mesa-tag">${m.tag}</span>
+      <div class="mesa-info">
+        <div class="mesa-name">${m.tag} · ${z?.nombre||'Zona'}</div>
+        <div class="mesa-meta">${m.cells.length} sillas · ${m.rowLetter}${m.seatStart}–${m.rowLetter}${m.seatStart+m.cells.length-1}</div>
+      </div>
+      <button class="mesa-del" onclick="removeMesa(${m.id})">×</button>
+    </div>`;
+  }).join('');
 }
 </script>
